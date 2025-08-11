@@ -3,7 +3,7 @@
   <link name="attached_tool_link">
     <visual>
       <geometry>
-        <mesh filename="a8c7fceb-d822-4558-b64f-d27a06f484de.obj" />
+        <mesh filename="2e2cc350-2b8b-4f5d-859e-236eb7a7f098.obj" />
       </geometry>
       <material name="Material">
         <color rgba="0.8 0.8 0.8 1.0" />
@@ -11,7 +11,7 @@
     </visual>
     <collision attr="{'attr': {}}">
       <geometry>
-        <mesh filename="758b41ba-5342-4e83-b4e8-e6b3e078b139.obj" />
+        <mesh filename="d47f752e-db0f-476f-bd12-e6c590bd0fb0.obj" />
       </geometry>
     </collision>
     <inertial>
