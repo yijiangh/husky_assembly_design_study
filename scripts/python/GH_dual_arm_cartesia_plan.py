@@ -10,6 +10,7 @@ from compas.geometry import Vector
 from compas.geometry import axis_angle_from_quaternion
 from compas.geometry import cross_vectors
 from compas.geometry import is_parallel_vector_vector
+from compas.geometry import angle_vectors
 from compas_robots import Configuration
 
 from compas_fab.backends import PyBulletClient
@@ -442,15 +443,13 @@ def plan_dual_arm_cartesian_motion(planner, start_state, options,
         
         # Get joint names for the right arm group
         group_joint_names = planner.client.robot_cell.get_configurable_joint_names(groups[1])
+        print(group_joint_names)
         
+        new_robot_cell_state = start_state.copy()
         # Merge each point from right arm trajectory
         for i, point in enumerate(right_arm_trajectory.points):
-            if i < len(new_trajectory.points):
-                # Merge the right arm joint values into the left arm trajectory point
-                new_trajectory.points[i].merge(point)
-            else:
-                # If right arm has more points, add them
-                new_trajectory.points.append(point)
+            new_trajectory.points[i] = new_robot_cell_state.robot_configuration.merged(new_trajectory.points[i])
+            new_trajectory.points[i].merge(point)
         
         # Store the merged trajectory
         dual_arm_waypoints["combined_trajectory"] = new_trajectory
@@ -483,48 +482,168 @@ options = {
 # - left_bar_from_tool0: Transformation (left arm tool0 offset from bar)
 # - right_bar_from_tool0: Transformation (right arm tool0 offset from bar)
 # - groups: list containing two planning group names [base_left_arm_manipulator, base_right_arm_manipulator]
+if trigger:
+    result = plan_dual_arm_cartesian_motion(
+        planner, start_state, options,
+        start_world_from_bar, goal_world_from_bar,
+        left_bar_from_tool0, right_bar_from_tool0,
+        groups
+    )
+    new_trajectory = result["combined_trajectory"]
 
-result = plan_dual_arm_cartesian_motion(
-    planner, start_state, options,
-    start_world_from_bar, goal_world_from_bar,
-    left_bar_from_tool0, right_bar_from_tool0,
-    groups
-)
-
-# Extract visualization objects for debugging in Rhino
-if "visualization" in result:
-    visualization = result["visualization"]
-    
-    # These variables are now available for visualization in Grasshopper:
-    # - bar_planes: List of Rhino Plane objects for bar waypoint frames
-    # - left_arm_planes: List of Rhino Plane objects for left arm tool0 frames
-    # - right_arm_planes: List of Rhino Plane objects for right arm tool0 frames
-    
-    bar_planes = visualization["bar_planes"]
-    left_arm_planes = visualization["left_arm_planes"]
-    right_arm_planes = visualization["right_arm_planes"]
-    
-    print("Visualization objects created and available for debugging:")
-    print(f"  bar_planes: {len(bar_planes)} planes")
-    print(f"  left_arm_planes: {len(left_arm_planes)} planes")
-    print(f"  right_arm_planes: {len(right_arm_planes)} planes")
-    
-    # Check if trajectories are None (due to errors)
-    if result.get("left_arm_trajectory") is None or result.get("right_arm_trajectory") is None:
-        print("\n⚠️  WARNING: Trajectories are None due to planning errors!")
-        if "error_message" in result:
-            print(f"Error: {result['error_message']}")
-        if "error_segment" in result:
-            print(f"Failed at segment: {result['error_segment']}")
-        print("Use the visualization objects to debug the frame positions and orientations.")
-    else:
-        print(f"\n✓ Successfully created trajectories:")
-        print(f"  Left arm: {len(result['left_arm_trajectory'].points)} trajectory points")
-        print(f"  Right arm: {len(result['right_arm_trajectory'].points)} trajectory points")
+    # Extract visualization objects for debugging in Rhino
+    if "visualization" in result:
+        visualization = result["visualization"]
         
-        # Show combined trajectory info if available
-        if "combined_trajectory" in result:
-            combined_traj = result["combined_trajectory"]
-            print(f"  Combined: {len(combined_traj.points)} trajectory points")
-            print(f"  Combined joint names: {combined_traj.joint_names}")
-
+        # These variables are now available for visualization in Grasshopper:
+        # - bar_planes: List of Rhino Plane objects for bar waypoint frames
+        # - left_arm_planes: List of Rhino Plane objects for left arm tool0 frames
+        # - right_arm_planes: List of Rhino Plane objects for right arm tool0 frames
+        
+        bar_planes = visualization["bar_planes"]
+        left_arm_planes = visualization["left_arm_planes"]
+        right_arm_planes = visualization["right_arm_planes"]
+        
+        print("Visualization objects created and available for debugging:")
+        print(f"  bar_planes: {len(bar_planes)} planes")
+        print(f"  left_arm_planes: {len(left_arm_planes)} planes")
+        print(f"  right_arm_planes: {len(right_arm_planes)} planes")
+        
+        # Check if trajectories are None (due to errors)
+        if result.get("left_arm_trajectory") is None or result.get("right_arm_trajectory") is None:
+            print("\n⚠️  WARNING: Trajectories are None due to planning errors!")
+            if "error_message" in result:
+                print(f"Error: {result['error_message']}")
+            if "error_segment" in result:
+                print(f"Failed at segment: {result['error_segment']}")
+            print("Use the visualization objects to debug the frame positions and orientations.")
+        else:
+            print(f"\n✓ Successfully created trajectories:")
+            print(f"  Left arm: {len(result['left_arm_trajectory'].points)} trajectory points")
+            print(f"  Right arm: {len(result['right_arm_trajectory'].points)} trajectory points")
+            
+            # Show combined trajectory info if available
+            if "combined_trajectory" in result:
+                combined_traj = result["combined_trajectory"]
+                print(f"  Combined: {len(combined_traj.points)} trajectory points")
+                print(f"  Combined joint names: {combined_traj.joint_names}")
+                
+                # Verify dual arm synchronization
+                print("\n" + "="*60)
+                print("DUAL ARM SYNCHRONIZATION VERIFICATION")
+                print("="*60)
+                
+                def verify_dual_arm_synchronization(planner, combined_trajectory, groups, left_bar_from_tool0, right_bar_from_tool0, tolerance=0.001):
+                    """
+                    Verify that the transformation between the two robot arms' tool0 frames is consistent
+                    across all trajectory points using forward kinematics.
+                    """
+                    robot_cell = planner.client.robot_cell
+                    left_arm_group = groups[0]
+                    right_arm_group = groups[1]
+                    
+                    # Get joint names for each arm
+                    left_joint_names = robot_cell.get_configurable_joint_names(left_arm_group)
+                    right_joint_names = robot_cell.get_configurable_joint_names(right_arm_group)
+                    
+                    # Expected transformation between arms (left_tool0_from_right_tool0)
+                    # This should be: left_bar_from_tool0.inverse() * right_bar_from_tool0
+                    expected_left_tool0_from_right_tool0 = left_bar_from_tool0.inverse() * right_bar_from_tool0
+                    
+                    verification_results = {
+                        "success": True,
+                        "max_position_error": 0.0,
+                        "max_orientation_error": 0.0,
+                        "failed_points": [],
+                        "details": []
+                    }
+                    
+                    print("Verifying dual arm synchronization across trajectory points...")
+                    
+                    for i, point in enumerate(combined_trajectory.points):
+                        # Extract joint values for each arm from the combined trajectory point
+                        left_joint_values = [point[joint_name] for joint_name in left_joint_names]
+                        right_joint_values = [point[joint_name] for joint_name in right_joint_names]
+                        
+                        # Create temporary robot cell states for forward kinematics
+                        temp_state = start_state.copy()
+                        temp_state.robot_configuration = combined_trajectory.start_configuration.copy()
+                        
+                        # Set joint values for each arm
+                        for j, joint_name in enumerate(left_joint_names):
+                            temp_state.robot_configuration[joint_name] = left_joint_values[j]
+                        for j, joint_name in enumerate(right_joint_names):
+                            temp_state.robot_configuration[joint_name] = right_joint_values[j]
+                        
+                        # Set robot state and get forward kinematics
+                        planner.set_robot_cell_state(temp_state)
+                        
+                        # Get forward kinematics for both arms' tool0 frames
+                        left_tool0_frame = planner.forward_kinematics(temp_state, TargetMode.ROBOT, group=left_arm_group)
+                        right_tool0_frame = planner.forward_kinematics(temp_state, TargetMode.ROBOT, group=right_arm_group)
+                        
+                        # Calculate actual transformation between arms
+                        left_tool0_from_right_tool0 = Transformation.from_frame_to_frame(right_tool0_frame, left_tool0_frame)
+                        
+                        # Compare with expected transformation
+                        position_error = (left_tool0_from_right_tool0.translation_vector - expected_left_tool0_from_right_tool0.translation_vector).length
+                        
+                        # Calculate orientation error by comparing axis vectors
+                        # Convert transformations to frames to get axis vectors directly
+                        actual_frame = Frame.from_transformation(left_tool0_from_right_tool0)
+                        expected_frame = Frame.from_transformation(expected_left_tool0_from_right_tool0)
+                        
+                        # Get axis vectors directly from frames
+                        actual_x_axis = actual_frame.xaxis
+                        actual_y_axis = actual_frame.yaxis
+                        actual_z_axis = actual_frame.zaxis
+                        
+                        expected_x_axis = expected_frame.xaxis
+                        expected_y_axis = expected_frame.yaxis
+                        expected_z_axis = expected_frame.zaxis
+                        
+                        # Calculate angles between corresponding axis vectors
+                        x_axis_error = angle_vectors(actual_x_axis, expected_x_axis)
+                        y_axis_error = angle_vectors(actual_y_axis, expected_y_axis)
+                        z_axis_error = angle_vectors(actual_z_axis, expected_z_axis)
+                        
+                        # Use the maximum axis error as the overall orientation error
+                        orientation_error = max(x_axis_error, y_axis_error, z_axis_error)
+                        
+                        # Update max errors
+                        verification_results["max_position_error"] = max(verification_results["max_position_error"], position_error)
+                        verification_results["max_orientation_error"] = max(verification_results["max_orientation_error"], orientation_error)
+                        
+                        # Check if this point fails verification
+                        if position_error > tolerance or orientation_error > tolerance:
+                            verification_results["success"] = False
+                            verification_results["failed_points"].append(i)
+                            verification_results["details"].append({
+                                "point": i,
+                                "position_error": position_error,
+                                "orientation_error": orientation_error,
+                                "left_tool0_frame": left_tool0_frame,
+                                "right_tool0_frame": right_tool0_frame
+                            })
+                    
+                    # Print verification results
+                    if verification_results["success"]:
+                        print(f"✓ Dual arm synchronization verification PASSED")
+                        print(f"  Max position error: {verification_results['max_position_error']:.6f} m")
+                        print(f"  Max orientation error: {verification_results['max_orientation_error']:.6f} rad")
+                    else:
+                        print(f"✗ Dual arm synchronization verification FAILED")
+                        print(f"  Failed points: {len(verification_results['failed_points'])}/{len(combined_trajectory.points)}")
+                        print(f"  Max position error: {verification_results['max_position_error']:.6f} m")
+                        print(f"  Max orientation error: {verification_results['max_orientation_error']:.6f} rad")
+                        print(f"  Failed at points: {verification_results['failed_points']}")
+                    
+                    return verification_results
+                
+                # Run the verification
+                verification_result = verify_dual_arm_synchronization(
+                    planner, combined_traj, groups, left_bar_from_tool0, right_bar_from_tool0, tolerance=0.001
+                )
+                
+                # Store verification results in the result dictionary
+                result["verification"] = verification_result
