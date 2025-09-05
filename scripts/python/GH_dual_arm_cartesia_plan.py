@@ -42,7 +42,7 @@ from compas_rhino.conversions import frame_to_rhino_plane
 
 def plan_dual_arm_cartesian_motion(planner, start_state, options, 
                                     start_world_from_bar, goal_world_from_bar, 
-                                    left_bar_from_tool0, right_bar_from_tool0,
+                                    bar_from_left_tool0, bar_from_right_tool0,
                                     groups):
     """
     Plan synchronized dual arm Cartesian motion.
@@ -59,9 +59,9 @@ def plan_dual_arm_cartesian_motion(planner, start_state, options,
         Starting pose of the bar in world coordinates
     goal_world_from_bar : Frame
         Goal pose of the bar in world coordinates
-    left_bar_from_tool0 : Transformation
+    bar_from_left_tool0 : Transformation
         Transformation from bar frame to left arm tool0 frame
-    right_bar_from_tool0 : Transformation
+    bar_from_right_tool0 : Transformation
         Transformation from bar frame to right arm tool0 frame
     groups : list
         List containing two planning group names: [base_left_arm_manipulator, base_right_arm_manipulator]
@@ -152,8 +152,8 @@ def plan_dual_arm_cartesian_motion(planner, start_state, options,
     # Assuming we have:
     # - start_world_from_bar: Frame representing the starting pose of the bar in world coordinates
     # - goal_world_from_bar: Frame representing the goal pose of the bar in world coordinates  
-    # - left_bar_from_tool0: Transformation from bar frame to left arm tool0 frame
-    # - right_bar_from_tool0: Transformation from bar frame to right arm tool0 frame
+    # - bar_from_left_tool0: Transformation from bar frame to left arm tool0 frame
+    # - bar_from_right_tool0: Transformation from bar frame to right arm tool0 frame
 
     # Step 1: Convert transformations to frames for interpolation
     # FrameInterpolator requires Frame objects, not Transformation objects
@@ -179,14 +179,14 @@ def plan_dual_arm_cartesian_motion(planner, start_state, options,
     for bar_frame in bar_waypoints:
         world_from_bar_frame = Transformation.from_frame(bar_frame)
 
-        # Left arm target: apply left_bar_from_tool0 transformation to bar_frame
+        # Left arm target: apply bar_from_left_tool0 transformation to bar_frame
         # Use the transformed() method to apply the transformation
-        left_arm_tf = world_from_bar_frame * left_bar_from_tool0
+        left_arm_tf = world_from_bar_frame * bar_from_left_tool0
         left_arm_frames.append(Frame.from_transformation(left_arm_tf))
         
-        # Right arm target: apply right_bar_from_tool0 transformation to bar_frame
+        # Right arm target: apply bar_from_right_tool0 transformation to bar_frame
         # Use the transformed() method to apply the transformation
-        right_arm_tf = world_from_bar_frame * right_bar_from_tool0
+        right_arm_tf = world_from_bar_frame * bar_from_right_tool0
         right_arm_frames.append(Frame.from_transformation(right_arm_tf))
 
     # Step 4: Create synchronized waypoint objects
@@ -479,14 +479,14 @@ options = {
 # - start_state: RobotCellState instance
 # - start_world_from_bar: Transformation (starting bar pose in world coordinates)
 # - goal_world_from_bar: Transformation (goal bar pose in world coordinates)
-# - left_bar_from_tool0: Transformation (left arm tool0 offset from bar)
-# - right_bar_from_tool0: Transformation (right arm tool0 offset from bar)
+# - bar_from_left_tool0: Transformation (left arm tool0 offset from bar)
+# - bar_from_right_tool0: Transformation (right arm tool0 offset from bar)
 # - groups: list containing two planning group names [base_left_arm_manipulator, base_right_arm_manipulator]
 if trigger:
     result = plan_dual_arm_cartesian_motion(
         planner, start_state, options,
         start_world_from_bar, goal_world_from_bar,
-        left_bar_from_tool0, right_bar_from_tool0,
+        bar_from_left_tool0, bar_from_right_tool0,
         groups
     )
     new_trajectory = result["combined_trajectory"]
@@ -533,7 +533,7 @@ if trigger:
                 print("DUAL ARM SYNCHRONIZATION VERIFICATION")
                 print("="*60)
                 
-                def verify_dual_arm_synchronization(planner, combined_trajectory, groups, left_bar_from_tool0, right_bar_from_tool0, tolerance=0.001):
+                def verify_dual_arm_synchronization(planner, combined_trajectory, groups, bar_from_left_tool0, bar_from_right_tool0, tolerance=0.001):
                     """
                     Verify that the transformation between the two robot arms' tool0 frames is consistent
                     across all trajectory points using forward kinematics.
@@ -547,8 +547,8 @@ if trigger:
                     right_joint_names = robot_cell.get_configurable_joint_names(right_arm_group)
                     
                     # Expected transformation between arms (left_tool0_from_right_tool0)
-                    # This should be: left_bar_from_tool0.inverse() * right_bar_from_tool0
-                    expected_left_tool0_from_right_tool0 = left_bar_from_tool0.inverse() * right_bar_from_tool0
+                    # This should be: bar_from_left_tool0.inverse() * bar_from_right_tool0
+                    expected_left_tool0_from_right_tool0 = bar_from_left_tool0.inverse() * bar_from_right_tool0
                     
                     verification_results = {
                         "success": True,
@@ -583,7 +583,9 @@ if trigger:
                         right_tool0_frame = planner.forward_kinematics(temp_state, TargetMode.ROBOT, group=right_arm_group)
                         
                         # Calculate actual transformation between arms
-                        left_tool0_from_right_tool0 = Transformation.from_frame_to_frame(right_tool0_frame, left_tool0_frame)
+                        world_from_left_tool0 = Transformation.from_frame(left_tool0_frame)
+                        world_from_right_tool0 = Transformation.from_frame(right_tool0_frame)
+                        left_tool0_from_right_tool0 = world_from_left_tool0.inverse() * world_from_right_tool0
                         
                         # Compare with expected transformation
                         position_error = (left_tool0_from_right_tool0.translation_vector - expected_left_tool0_from_right_tool0.translation_vector).length
@@ -616,6 +618,7 @@ if trigger:
                         
                         # Check if this point fails verification
                         if position_error > tolerance or orientation_error > tolerance:
+                            print(f'pt#{i} - pos error {position_error}, ori error {orientation_error}')
                             verification_results["success"] = False
                             verification_results["failed_points"].append(i)
                             verification_results["details"].append({
@@ -642,7 +645,7 @@ if trigger:
                 
                 # Run the verification
                 verification_result = verify_dual_arm_synchronization(
-                    planner, combined_traj, groups, left_bar_from_tool0, right_bar_from_tool0, tolerance=0.001
+                    planner, combined_traj, groups, bar_from_left_tool0, bar_from_right_tool0, tolerance=0.001
                 )
                 
                 # Store verification results in the result dictionary
