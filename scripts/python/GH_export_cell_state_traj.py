@@ -7,7 +7,23 @@ from compas import json_dump, json_load
 from compas_fab.robots import RobotCell, RobotCellState
 
 
-def export_robotcell_and_state(content, filepath, file_prefix=None, trajectory=None):
+def export_robotcell_and_state(content, filepath, file_prefix=None, approach_trajectory=None, retreat_trajectory=None):
+    """
+    Export RobotCell or RobotCellState to JSON with optional trajectory data.
+    
+    Parameters:
+    -----------
+    content : RobotCell or RobotCellState
+        The content to export
+    filepath : str
+        Directory path where to save the files
+    file_prefix : str, optional
+        Prefix for the filename
+    approach_trajectory : JointTrajectory, optional
+        Approach trajectory to save alongside the state
+    retreat_trajectory : JointTrajectory, optional
+        Retreat trajectory to save alongside the state
+    """
     os.makedirs(filepath, exist_ok=True)  # Ensure directory exists
 
     content_class = type(content).__name__
@@ -27,24 +43,39 @@ def export_robotcell_and_state(content, filepath, file_prefix=None, trajectory=N
 
     print(f"Exported {content_class} to {full_path}")
     
-    # If trajectory is provided and content is RobotCellState, also save the trajectory
-    if trajectory is not None and isinstance(content, RobotCellState):
-        trajectory_class = type(trajectory).__name__
-        if file_prefix:
-            trajectory_file_name = f"{file_prefix}_{trajectory_class}.json"
-        else:
-            trajectory_file_name = f"{trajectory_class}.json"
+    # If trajectories are provided and content is RobotCellState, also save the trajectories
+    if isinstance(content, RobotCellState):
+        if approach_trajectory is not None:
+            trajectory_class = type(approach_trajectory).__name__
+            if file_prefix:
+                trajectory_file_name = f"{file_prefix}_approach_{trajectory_class}.json"
+            else:
+                trajectory_file_name = f"approach_{trajectory_class}.json"
+            
+            trajectory_path = os.path.join(filepath, trajectory_file_name)
+            
+            with open(trajectory_path, "w") as f:
+                json_dump(approach_trajectory, f, pretty=True)
+            
+            print(f"Exported approach {trajectory_class} to {trajectory_path}")
         
-        trajectory_path = os.path.join(filepath, trajectory_file_name)
-        
-        with open(trajectory_path, "w") as f:
-            json_dump(trajectory, f, pretty=True)
-        
-        print(f"Exported {trajectory_class} to {trajectory_path}")
+        if retreat_trajectory is not None:
+            trajectory_class = type(retreat_trajectory).__name__
+            if file_prefix:
+                trajectory_file_name = f"{file_prefix}_retreat_{trajectory_class}.json"
+            else:
+                trajectory_file_name = f"retreat_{trajectory_class}.json"
+            
+            trajectory_path = os.path.join(filepath, trajectory_file_name)
+            
+            with open(trajectory_path, "w") as f:
+                json_dump(retreat_trajectory, f, pretty=True)
+            
+            print(f"Exported retreat {trajectory_class} to {trajectory_path}")
 
 
 # Example usage:
-# robot_cell, robot_cell_state, trajectory = ... (your objects)
+# robot_cell, robot_cell_state, approach_trajectory, retreat_trajectory = ... (your objects)
 if save_robot_cell and robot_cell is not None:
     export_robotcell_and_state(robot_cell, file_path)
 if save_state and robot_cell_state is not None:
@@ -52,5 +83,6 @@ if save_state and robot_cell_state is not None:
         robot_cell_state,
         os.path.join(file_path, 'RobotCellStates'),
         state_name,
-        trajectory  # Pass trajectory if available
+        approach_trajectory,  # Pass approach trajectory if available
+        retreat_trajectory    # Pass retreat trajectory if available
     )
