@@ -5,3 +5,4 @@
 */export/backups/*.3db
 *.stlbak
 *.bak
+.DS_Store
